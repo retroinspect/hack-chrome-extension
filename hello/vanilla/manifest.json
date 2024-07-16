@@ -18,11 +18,17 @@
     }
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "service-worker.js",
+    "type": "module"
   },
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://extension-tips.glitch.me/*"
   ],
   "commands": {
     "_execute_action": {
@@ -31,5 +37,8 @@
         "mac": "Command+B"
       }
     }
+  },
+  "omnibox": {
+    "keyword": "api"
   }
 }
