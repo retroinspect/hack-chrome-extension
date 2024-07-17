@@ -1,6 +1,8 @@
 console.log("sw-omnibox.js");
 
+
 chrome.runtime.onInstalled.addListener(({ reason }) => {
+    console.log(reason);
     if (reason === "install") {
         chrome.storage.local.set({
             apiSuggestions: ['tabs', 'storage', 'scripting']
@@ -9,7 +11,13 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
 });
 
 async function getApiSuggestions() {
-    
+    const { apiSuggestions } = await chrome.storage.local.get('apiSuggestions');
+    console.log(apiSuggestions);
+    if (apiSuggestions) {
+        return apiSuggestions;
+    }
+
+    return [];
 }
 
 const URL_CHROME_EXTENSIONS_DOC =
@@ -21,7 +29,7 @@ chrome.omnibox.onInputChanged.addListener(async (input, suggest) => {
         description: 'Enter a Chrome API or choose from past searches'
     });
 
-    const { apiSuggestions } = await chrome.storage.local.get('apiSuggestions');
+    const apiSuggestions = await getApiSuggestions();
     const suggestions = apiSuggestions.map((api) => {
         return { content: api, description: `Open chrome.${api} API` };
     });
@@ -35,7 +43,7 @@ chrome.omnibox.onInputEntered.addListener((input) => {
 });
 
 async function updateHistory(input) {
-    const { apiSuggestions } = await chrome.storage.local.get('apiSuggestions');
+    const apiSuggestions = await getApiSuggestions();
     apiSuggestions.unshift(input);
     apiSuggestions.splice(NUMBER_OF_PREVIOUS_SEARCHES);
     return chrome.storage.local.set({ apiSuggestions });
