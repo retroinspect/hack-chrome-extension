@@ -1,75 +1,214 @@
-console.log('hello world');
 
-let tabs = {};
+var debug = false;
+var tabs = {};
 
 function toggle(tab) {
-    if (!tabs[tab.id]) {
+    if (!tabs[tab.id])
         addTab(tab);
-    } else {
+    else
         deactivateTab(tab.id);
-    }
 }
 
 function addTab(tab) {
-    // TODO
+    tabs[tab.id] = Object.create(dimensions);
+    tabs[tab.id].activate(tab);
 }
 
-function deactivateTab(tabId) {
-    // TODO
+function deactivateTab(id) {
+    tabs[id].deactivate();
 }
 
 function removeTab(id) {
-    // TODO
+    for (var tabId in tabs) {
+        if (tabId == id)
+            delete tabs[tabId];
+    }
 }
 
+var lastBrowserAction = null;
 
-chrome.action.onClicked.addListener((tab) => {
+chrome.action.onClicked.addListener(function (tab) {
+    if (lastBrowserAction && Date.now() - lastBrowserAction < 10) {
+        // fix bug in Chrome Version 49.0.2623.87
+        // that triggers browserAction.onClicked twice 
+        // when called from shortcut _execute_browser_action
+        return;
+    }
     toggle(tab);
+    lastBrowserAction = Date.now();
 });
 
-chrome.runtime.onConnect.addListener((port) => {
+chrome.runtime.onConnect.addListener(function (port) {
     tabs[port.sender.tab.id].initialize(port);
 });
 
-chrome.runtime.onSuspend.addListener(() => {
-    for (const tabId in tabs) {
+chrome.runtime.onSuspend.addListener(function () {
+    for (var tabId in tabs) {
         tabs[tabId].deactivate(true);
     }
 });
 
-const dimensions = {
-    image: new Image(),
+async function sendMessageToOffscreenDocument() {
+    if (!(await hasDocument())) {
+        await chrome.offscreen.createDocument({
+            url: '/offscreen.html',
+            reasons: [chrome.offscreen.Reason.DOM_PARSER],
+            justification: 'Parse DOM'
+        });
+    }
+    // Now that we have an offscreen document, we can dispatch the
+    // message.
+    chrome.runtime.sendMessage({
+        type: 'foo',
+        target: 'offscreen',
+        data: {}
+    });
+}
 
-    // TODO: may need offscreen
-    canvas: document.createElement('canvas'),
+chrome.runtime.onMessage.addListener(handleMessages);
+async function handleMessages(message) {
+    // TODO: handle offscreen message
+}
+
+var dimensions = {
+    image: null,
+    canvas: null,
     alive: true,
 
-    activate: (tab) => {
+    activate: async function (tab) {
+        this.tab = tab;
 
+        this.onBrowserDisconnectClosure = this.onBrowserDisconnect.bind(this);
+        this.receiveBrowserMessageClosure = this.receiveBrowserMessage.bind(this);
+
+        chrome.tabs.insertCSS(this.tab.id, { file: 'tooltip.css' });
+        chrome.tabs.executeScript(this.tab.id, { file: 'tooltip.chrome.js' });
+        chrome.browserAction.setIcon({
+            tabId: this.tab.id,
+            path: {
+                16: "images/icon16_active.png",
+                19: "images/icon19_active.png",
+                32: "images/icon16_active@2x.png",
+                38: "images/icon19_active@2x.png"
+            }
+        });
+
+        this.worker = new Worker("dimensions.js");
+        this.worker.onmessage = this.receiveWorkerMessage.bind(this);
+        this.worker.postMessage({
+            type: 'init',
+            debug: debug
+        });
+
+        await sendMessageToOffscreenDocument();
     },
 
-    deactivate: (silent) => {
+    deactivate: function (silent) {
+        if (!this.port) {
+            // not yet initialized
+            this.alive = false;
+            return;
+        }
 
+        if (!silent)
+            this.port.postMessage({ type: 'destroy' });
+
+        this.port.onMessage.removeListener(this.receiveBrowserMessageClosure);
+        this.port.onDisconnect.removeListener(this.onBrowserDisconnectClosure);
+
+        chrome.browserAction.setIcon({
+            tabId: this.tab.id,
+            path: {
+                16: "images/icon16.png",
+                19: "images/icon19.png",
+                32: "images/icon16@2x.png",
+                38: "images/icon19@2x.png"
+            }
+        });
+
+        window.removeTab(this.tab.id);
     },
 
-    onBrowserDisconnect: () {
+    onBrowserDisconnect: function () {
         this.deactivate(true);
     },
 
-    initialize: (port) => { },
+    initialize: function (port) {
+        this.port = port;
 
-    receiveWorkerMessage: (event) => {
+        if (!this.alive) {
+            // was deactivated whilest still booting up
+            this.deactivate();
+            return;
+        }
 
+        this.port.onMessage.addListener(this.receiveBrowserMessageClosure);
+        this.port.onDisconnect.addListener(this.onBrowserDisconnectClosure);
+        this.port.postMessage({
+            type: 'init',
+            debug: debug
+        });
     },
 
-    receiveBrowserMessage: (event) => {
+    receiveWorkerMessage: function (event) {
+        var forward = ['debug screen', 'distances', 'screenshot processed'];
 
+        if (forward.indexOf(event.data.type) > -1) {
+            this.port.postMessage(event.data);
+        }
     },
 
-    takeScreenshot: () => { },
+    receiveBrowserMessage: function (event) {
+        var forward = ['position', 'area'];
 
-    parseScreenshot: (dataUrl) => { },
+        if (forward.indexOf(event.type) > -1) {
+            this.worker.postMessage(event);
+        } else {
+            switch (event.type) {
+                case 'take screenshot':
+                    this.takeScreenshot();
+                    break;
+                case 'close_overlay':
+                    this.deactivate();
+                    break;
+            }
+        }
+    },
 
-    loadImage: () => { }
-}
+    takeScreenshot: function () {
+        chrome.tabs.captureVisibleTab({ format: "png" }, this.parseScreenshot.bind(this));
+    },
 
+    parseScreenshot: function (dataUrl) {
+        this.image.onload = this.loadImage.bind(this);
+        this.image.src = dataUrl;
+    },
+
+    //
+    // loadImage
+    // ---------
+    //  
+    // responsible to load a image and extract the image data
+    //
+
+    loadImage: function () {
+        this.ctx = this.canvas.getContext('2d');
+
+        // adjust the canvas size to the image size
+        this.canvas.width = this.tab.width;
+        this.canvas.height = this.tab.height;
+
+        // draw the image to the canvas
+        this.ctx.drawImage(this.image, 0, 0, this.canvas.width, this.canvas.height);
+
+        // read out the image data from the canvas
+        var imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
+
+        this.worker.postMessage({
+            type: 'imgData',
+            imgData: imgData.buffer,
+            width: this.canvas.width,
+            height: this.canvas.height
+        }, [imgData.buffer]);
+    }
+};
