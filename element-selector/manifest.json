@@ -1,0 +1,17 @@
+{
+    "manifest_version": 3,
+    "name": "ElementSelector",
+    "description": "selects pointed element",
+    "version": "0.0.1",
+    "author": "retroinspect",
+    "content_scripts": [
+        {
+            "matches": [
+                "https://developer.chrome.com/docs/extensions/*"
+            ],
+            "js": [
+                "select.js"
+            ]
+        }
+    ]
+}
