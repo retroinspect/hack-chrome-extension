@@ -1,3 +1,6 @@
+let selectedElement = undefined;
+let selectedElementBorder = '';
+
 function init() {
     window.addEventListener('mousemove', onInputMove);
     window.addEventListener('touchmove', onInputMove);
@@ -13,14 +16,22 @@ function getPointFromEvent(event) {
 
 function onInputMove(event) {
     const { x, y } = getPointFromEvent(event);
-    highlightElementFromPoint(x, y);
+    selectElementFromPoint(x, y);
 }
 
-function highlightElementFromPoint(x, y) {
+function selectElementFromPoint(x, y) {
     const elem = document.elementFromPoint(x, y);
-    console.log(elem);
-    if (elem) {
+    if (elem && elem !== selectedElement) {
+        unselectElement();
+        selectedElement = elem;
+        selectedElementBorder = elem.style.border;
         elem.style.border = '3px solid';
+    }
+}
+
+function unselectElement() {
+    if (selectedElement) {
+        selectedElement.style.border = selectedElementBorder;
     }
 }
 
